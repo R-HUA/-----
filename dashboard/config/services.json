@@ -1,0 +1,9 @@
+[
+  {
+    "id": "example",
+    "name": "Example",
+    "url": "https://example.com",
+    "description": "Sample service. Replace this with an internal service address reachable by the backend.",
+    "enabled": true
+  }
+]
