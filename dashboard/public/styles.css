@@ -214,12 +214,83 @@ button {
   cursor: not-allowed;
 }
 
+.service-name-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .service-name {
   display: block;
   overflow: hidden;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.status-badge {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  max-width: 92px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--muted);
+  background: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.status-badge span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #94a3b8;
+}
+
+.status-badge.online {
+  color: #047857;
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+}
+
+.status-badge.online .status-dot {
+  background: #10b981;
+}
+
+.status-badge.degraded {
+  color: #92400e;
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.status-badge.degraded .status-dot {
+  background: #f59e0b;
+}
+
+.status-badge.offline {
+  color: #991b1b;
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.status-badge.offline .status-dot {
+  background: #ef4444;
+}
+
+.status-badge.disabled {
+  color: #64748b;
+  background: #f8fafc;
 }
 
 .service-url,
@@ -440,6 +511,10 @@ button {
 
 .dialog-actions {
   padding-top: 4px;
+}
+
+.auth-actions {
+  justify-content: flex-end;
 }
 
 .dialog-action-group {

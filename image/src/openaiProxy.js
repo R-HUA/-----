@@ -117,12 +117,24 @@ export function createImageProxyHandler({ config, store, waiters }) {
 async function callOpenAI({ req, config, parsed }) {
   const upstreamUrl = new URL(`${config.openaiBaseUrl}${req.originalUrl}`);
   const headers = buildUpstreamHeaders(req, config, parsed.upstreamHeaders);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.upstreamTimeoutMs);
 
-  return fetch(upstreamUrl, {
-    method: req.method,
-    headers,
-    body: parsed.upstreamBody,
-  });
+  try {
+    return await fetch(upstreamUrl, {
+      method: req.method,
+      headers,
+      body: parsed.upstreamBody,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw Object.assign(new Error('OpenAI upstream request timed out.'), { statusCode: 504 });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function buildUpstreamHeaders(req, config, requestHeaders) {

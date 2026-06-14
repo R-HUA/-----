@@ -25,6 +25,9 @@
           <button id="refreshButton" class="icon-button" type="button" title="刷新服务列表" aria-label="刷新服务列表">
             <span aria-hidden="true">↻</span>
           </button>
+          <button id="logoutButton" class="icon-button" type="button" title="退出登录" aria-label="退出登录">
+            <span aria-hidden="true">⎋</span>
+          </button>
         </div>
 
         <div class="search-box">
@@ -56,6 +59,25 @@
       </main>
     </div>
 
+    <dialog id="loginDialog" class="service-dialog auth-dialog">
+      <form id="loginForm" method="dialog">
+        <div class="dialog-header">
+          <h2>访问验证</h2>
+        </div>
+
+        <label>
+          <span>工作台令牌</span>
+          <input id="adminTokenInput" name="token" type="password" required autocomplete="current-password">
+        </label>
+
+        <p id="loginError" class="form-error" role="alert"></p>
+
+        <div class="dialog-actions auth-actions">
+          <button class="primary-button" type="submit">登录</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="serviceDialog" class="service-dialog">
       <form id="serviceForm" method="dialog">
         <div class="dialog-header">
@@ -78,6 +100,11 @@
         <label>
           <span>后端访问地址</span>
           <input id="serviceUrlInput" name="url" required inputmode="url" placeholder="http://10.0.0.12:8080">
+        </label>
+
+        <label>
+          <span>健康检查路径</span>
+          <input id="serviceHealthPathInput" name="healthPath" autocomplete="off" placeholder="/health">
         </label>
 
         <label>

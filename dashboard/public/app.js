@@ -1,9 +1,12 @@
 const state = {
   services: [],
+  statuses: {},
   tabs: [],
   activeTabId: null,
   editingServiceId: null,
-  search: ""
+  search: "",
+  authRequired: false,
+  authenticated: true
 };
 
 const els = {
@@ -11,6 +14,7 @@ const els = {
   serviceSearch: document.getElementById("serviceSearch"),
   addServiceButton: document.getElementById("addServiceButton"),
   refreshButton: document.getElementById("refreshButton"),
+  logoutButton: document.getElementById("logoutButton"),
   tabs: document.getElementById("tabs"),
   emptyState: document.getElementById("emptyState"),
   frameHost: document.getElementById("frameHost"),
@@ -25,9 +29,14 @@ const els = {
   serviceNameInput: document.getElementById("serviceNameInput"),
   serviceIdInput: document.getElementById("serviceIdInput"),
   serviceUrlInput: document.getElementById("serviceUrlInput"),
+  serviceHealthPathInput: document.getElementById("serviceHealthPathInput"),
   serviceDescriptionInput: document.getElementById("serviceDescriptionInput"),
   serviceEnabledInput: document.getElementById("serviceEnabledInput"),
-  formError: document.getElementById("formError")
+  formError: document.getElementById("formError"),
+  loginDialog: document.getElementById("loginDialog"),
+  loginForm: document.getElementById("loginForm"),
+  adminTokenInput: document.getElementById("adminTokenInput"),
+  loginError: document.getElementById("loginError")
 };
 
 function proxyUrl(serviceId) {
@@ -54,11 +63,16 @@ async function api(path, options = {}) {
 
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
+    let payload = null;
     try {
-      const payload = await response.json();
+      payload = await response.json();
       message = payload.message || payload.error || message;
     } catch {
       // Keep the HTTP status message when the response is not JSON.
+    }
+    if (response.status === 401 && payload?.error === "auth_required") {
+      state.authenticated = false;
+      showLoginDialog();
     }
     throw new Error(message);
   }
@@ -69,10 +83,33 @@ async function api(path, options = {}) {
   return response.json();
 }
 
+async function loadSession() {
+  const session = await api("/api/session");
+  state.authRequired = Boolean(session.authRequired);
+  state.authenticated = Boolean(session.authenticated);
+  els.logoutButton.style.display = state.authRequired ? "inline-grid" : "none";
+  if (state.authRequired && !state.authenticated) {
+    showLoginDialog();
+  }
+  return session;
+}
+
 async function loadServices() {
   state.services = await api("/api/services");
   renderServices();
   renderTabs();
+  await loadStatuses();
+}
+
+async function loadStatuses() {
+  if (!state.services.length) {
+    state.statuses = {};
+    renderServices();
+    return;
+  }
+  const payload = await api("/api/statuses");
+  state.statuses = Object.fromEntries((payload.data || []).map((status) => [status.id, status]));
+  renderServices();
 }
 
 function filteredServices() {
@@ -105,10 +142,20 @@ function renderServices() {
   els.serviceList.innerHTML = services.map((service) => {
     const active = state.tabs.some((tab) => tab.serviceId === service.id && tab.id === state.activeTabId);
     const disabled = service.enabled === false;
+    const status = state.statuses[service.id];
+    const statusClass = status?.state || (disabled ? "disabled" : "unknown");
+    const statusText = statusLabel(status, disabled);
+    const statusTitle = statusTitleText(status, disabled);
     return `
       <div class="service-item ${active ? "active" : ""} ${disabled ? "disabled" : ""}" data-service-id="${escapeHtml(service.id)}">
         <button class="service-open" type="button" data-action="open" title="${escapeHtml(service.url)}" ${disabled ? "disabled" : ""}>
-          <span class="service-name">${escapeHtml(service.name)}</span>
+          <span class="service-name-row">
+            <span class="service-name">${escapeHtml(service.name)}</span>
+            <span class="status-badge ${escapeHtml(statusClass)}" title="${escapeHtml(statusTitle)}">
+              <span class="status-dot" aria-hidden="true"></span>
+              <span>${escapeHtml(statusText)}</span>
+            </span>
+          </span>
           <span class="service-url">${escapeHtml(service.url)}</span>
           ${service.description ? `<span class="service-desc">${escapeHtml(service.description)}</span>` : ""}
         </button>
@@ -118,6 +165,36 @@ function renderServices() {
       </div>
     `;
   }).join("");
+}
+
+function statusLabel(status, disabled) {
+  if (disabled) {
+    return "停用";
+  }
+  if (!status) {
+    return "未知";
+  }
+  if (status.state === "online") {
+    return `${status.latencyMs}ms`;
+  }
+  if (status.state === "degraded") {
+    return `HTTP ${status.statusCode}`;
+  }
+  return "离线";
+}
+
+function statusTitleText(status, disabled) {
+  if (disabled) {
+    return "服务已停用";
+  }
+  if (!status) {
+    return "尚未检查";
+  }
+  const base = `${status.target || ""} · ${status.checkedAt || ""}`;
+  if (status.error) {
+    return `${status.error} · ${base}`;
+  }
+  return `${status.state} · HTTP ${status.statusCode} · ${status.latencyMs}ms · ${base}`;
 }
 
 function renderTabs() {
@@ -157,6 +234,7 @@ function createFrame(tab) {
   frame.title = tab.title;
   frame.src = proxyUrl(tab.serviceId);
   frame.setAttribute("referrerpolicy", "same-origin");
+  frame.setAttribute("sandbox", "allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts");
   els.frameHost.appendChild(frame);
   return frame;
 }
@@ -237,6 +315,7 @@ function openServiceDialog(service = null) {
   els.serviceNameInput.value = service?.name || "";
   els.serviceIdInput.value = service?.id || "";
   els.serviceUrlInput.value = service?.url || "";
+  els.serviceHealthPathInput.value = service?.healthPath || "";
   els.serviceDescriptionInput.value = service?.description || "";
   els.serviceEnabledInput.checked = service?.enabled !== false;
   showFormError("");
@@ -253,9 +332,55 @@ function collectFormPayload() {
     name: els.serviceNameInput.value.trim(),
     id: els.serviceIdInput.value.trim(),
     url: els.serviceUrlInput.value.trim(),
+    healthPath: els.serviceHealthPathInput.value.trim(),
     description: els.serviceDescriptionInput.value.trim(),
     enabled: els.serviceEnabledInput.checked
   };
+}
+
+function showLoginError(message) {
+  els.loginError.textContent = message || "";
+  els.loginError.classList.toggle("visible", Boolean(message));
+}
+
+function showLoginDialog() {
+  if (!state.authRequired) {
+    return;
+  }
+  showLoginError("");
+  if (!els.loginDialog.open) {
+    els.loginDialog.showModal();
+  }
+  els.adminTokenInput.focus();
+}
+
+async function login(event) {
+  event.preventDefault();
+  showLoginError("");
+  try {
+    await api("/api/session", {
+      method: "POST",
+      body: JSON.stringify({ token: els.adminTokenInput.value })
+    });
+    els.adminTokenInput.value = "";
+    els.loginDialog.close();
+    await loadSession();
+    await loadServices();
+  } catch (err) {
+    showLoginError(err.message);
+  }
+}
+
+async function logout() {
+  await api("/api/session", { method: "DELETE" }).catch(() => null);
+  state.authenticated = false;
+  state.services = [];
+  state.statuses = {};
+  for (const tab of [...state.tabs]) {
+    closeTab(tab.id);
+  }
+  renderServices();
+  showLoginDialog();
 }
 
 async function saveService(event) {
@@ -351,13 +476,22 @@ els.serviceSearch.addEventListener("input", (event) => {
 
 els.addServiceButton.addEventListener("click", () => openServiceDialog());
 els.refreshButton.addEventListener("click", () => loadServices().catch((err) => alert(err.message)));
+els.logoutButton.addEventListener("click", () => logout().catch((err) => alert(err.message)));
 els.reloadTabButton.addEventListener("click", reloadActiveTab);
 els.openExternalButton.addEventListener("click", openActiveProxyUrl);
 els.closeDialogButton.addEventListener("click", closeServiceDialog);
 els.cancelServiceButton.addEventListener("click", closeServiceDialog);
 els.serviceForm.addEventListener("submit", saveService);
 els.deleteServiceButton.addEventListener("click", deleteEditingService);
+els.loginForm.addEventListener("submit", login);
 
-loadServices().catch((err) => {
-  els.serviceList.innerHTML = `<div class="empty-service">${escapeHtml(err.message)}</div>`;
-});
+loadSession()
+  .then((session) => {
+    if (!session.authRequired || session.authenticated) {
+      return loadServices();
+    }
+    return null;
+  })
+  .catch((err) => {
+    els.serviceList.innerHTML = `<div class="empty-service">${escapeHtml(err.message)}</div>`;
+  });

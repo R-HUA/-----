@@ -1,4 +1,5 @@
 import express from 'express';
+import { createClientAccessMiddleware } from './accessControl.js';
 import { ensureStorage } from './assets.js';
 import { createAdminRouter, toAdminView } from './admin.js';
 import { isImageEndpoint, createImageProxyHandler } from './openaiProxy.js';
@@ -14,6 +15,15 @@ export async function createApp(config) {
 
   app.disable('x-powered-by');
   app.use('/admin', express.json({ limit: '1mb' }));
+  app.get('/healthz', (req, res) => {
+    res.json({
+      ok: true,
+      records: store.list().length,
+      approvalRequired: config.requireApproval,
+      clientAuthRequired: (config.clientApiKeys || []).length > 0,
+    });
+  });
+  app.use('/v1/images', createClientAccessMiddleware(config));
 
   const imageProxyHandler = createImageProxyHandler({ config, store, waiters });
   app.post(['/v1/images/generations', '/v1/images/edits', '/v1/images/variations'], imageProxyHandler);

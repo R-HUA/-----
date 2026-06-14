@@ -2,8 +2,6 @@ import Busboy from 'busboy';
 import { Blob } from 'node:buffer';
 import { dataUrlToBuffer, saveInputFile } from './assets.js';
 
-const MAX_BODY_BYTES = 1024 * 1024 * 1024;
-
 export async function parseProxyRequest(req, config, requestId) {
   const contentType = req.headers['content-type'] || '';
 
@@ -11,7 +9,7 @@ export async function parseProxyRequest(req, config, requestId) {
     return parseMultipartRequest(req, config, requestId);
   }
 
-  const rawBody = await readRawBody(req);
+  const rawBody = await readRawBody(req, config.maxJsonBodyBytes);
   let parsedJson = null;
   if (contentType.toLowerCase().includes('application/json') && rawBody.length) {
     parsedJson = JSON.parse(rawBody.toString('utf8'));
@@ -32,14 +30,14 @@ export async function parseProxyRequest(req, config, requestId) {
   };
 }
 
-function readRawBody(req) {
+function readRawBody(req, maxBodyBytes) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let total = 0;
 
     req.on('data', (chunk) => {
       total += chunk.length;
-      if (total > MAX_BODY_BYTES) {
+      if (total > maxBodyBytes) {
         reject(Object.assign(new Error('Request body too large'), { statusCode: 413 }));
         req.destroy();
         return;
@@ -58,7 +56,22 @@ async function parseMultipartRequest(req, config, requestId) {
   const fileWrites = [];
 
   await new Promise((resolve, reject) => {
-    const busboy = Busboy({ headers: req.headers });
+    let rejected = false;
+    const fail = (error) => {
+      if (rejected) {
+        return;
+      }
+      rejected = true;
+      reject(error);
+    };
+    const busboy = Busboy({
+      headers: req.headers,
+      limits: {
+        fileSize: config.maxMultipartFileBytes,
+        files: config.maxMultipartFiles,
+        fields: config.maxMultipartFields,
+      },
+    });
 
     busboy.on('field', (name, value) => {
       fields.push({ name, value });
@@ -67,9 +80,17 @@ async function parseMultipartRequest(req, config, requestId) {
 
     busboy.on('file', (name, file, info) => {
       const chunks = [];
+      let fileLimited = false;
       file.on('data', (chunk) => chunks.push(chunk));
-      file.on('error', reject);
+      file.on('limit', () => {
+        fileLimited = true;
+        fail(Object.assign(new Error(`Multipart file too large: ${info.filename || name}`), { statusCode: 413 }));
+      });
+      file.on('error', fail);
       file.on('end', () => {
+        if (fileLimited || rejected) {
+          return;
+        }
         const write = (async () => {
           const buffer = Buffer.concat(chunks);
           const contentType = info.mimeType || 'application/octet-stream';
@@ -84,19 +105,28 @@ async function parseMultipartRequest(req, config, requestId) {
           }));
         })();
         fileWrites.push(write);
-        write.catch(reject);
+        write.catch(fail);
       });
     });
 
     busboy.on('finish', async () => {
       try {
+        if (rejected) {
+          return;
+        }
         await Promise.all(fileWrites);
         resolve();
       } catch (error) {
-        reject(error);
+        fail(error);
       }
     });
-    busboy.on('error', reject);
+    busboy.on('filesLimit', () => {
+      fail(Object.assign(new Error('Too many multipart files'), { statusCode: 413 }));
+    });
+    busboy.on('fieldsLimit', () => {
+      fail(Object.assign(new Error('Too many multipart fields'), { statusCode: 413 }));
+    });
+    busboy.on('error', fail);
     req.pipe(busboy);
   });
 

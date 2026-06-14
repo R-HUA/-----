@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #182026;
+  background: #f6f7f9;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.viewer-shell {
+  height: calc(100vh - 56px);
+}
+
+.code-block {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.markdown-body {
+  line-height: 1.65;
+}
+
+.markdown-body h1 {
+  font-size: 1.875rem;
+  font-weight: 700;
+  margin: 1.25rem 0 0.75rem;
+}
+
+.markdown-body h2 {
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin: 1rem 0 0.5rem;
+}
+
+.markdown-body h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0.85rem 0 0.4rem;
+}
+
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body table,
+.markdown-body pre {
+  margin: 0.75rem 0;
+}
+
+.markdown-body a {
+  color: #0f766e;
+  text-decoration: underline;
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid #d7dde4;
+  padding: 0.45rem 0.6rem;
+}
+
+.markdown-body code {
+  background: #eef2f5;
+  border-radius: 4px;
+  padding: 0.1rem 0.25rem;
+}
+
+.markdown-body pre code {
+  display: block;
+  overflow-x: auto;
+  padding: 1rem;
+}

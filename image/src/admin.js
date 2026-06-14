@@ -1,5 +1,6 @@
 import path from 'node:path';
 import express from 'express';
+import { safeEqual } from './security.js';
 
 const ASSET_KINDS = new Set(['inputs', 'generated', 'thumbnails']);
 
@@ -15,7 +16,7 @@ export function createAdminRouter({ config, store, waiters }) {
       ? req.headers.authorization.slice('Bearer '.length)
       : null;
     const token = req.headers['x-admin-token'] || bearer;
-    if (token === config.adminToken) {
+    if (safeEqual(token, config.adminToken)) {
       return next();
     }
 
@@ -24,6 +25,37 @@ export function createAdminRouter({ config, store, waiters }) {
 
   router.get('/pending', (req, res) => {
     res.json({ data: store.pending().map(toAdminView) });
+  });
+
+  router.get('/summary', (req, res) => {
+    const records = store.list();
+    const byStatus = {};
+    let generatedImages = 0;
+    let inputFiles = 0;
+    let generatedBytes = 0;
+    let inputBytes = 0;
+
+    for (const record of records) {
+      byStatus[record.status] = (byStatus[record.status] || 0) + 1;
+      for (const file of record.request?.inputFiles ?? []) {
+        inputFiles += 1;
+        inputBytes += file.bytes || 0;
+      }
+      for (const image of record.outputs ?? []) {
+        generatedImages += 1;
+        generatedBytes += image.bytes || 0;
+      }
+    }
+
+    res.json({
+      records: records.length,
+      byStatus,
+      pendingReview: byStatus.pending_review || 0,
+      generatedImages,
+      inputFiles,
+      generatedBytes,
+      inputBytes,
+    });
   });
 
   router.get('/history', (req, res) => {

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import net from 'node:net';
 import path from 'node:path';
 import sharp from 'sharp';
 
@@ -47,6 +48,44 @@ export function dataUrlToBuffer(value) {
     contentType: match[1] || 'application/octet-stream',
     buffer: Buffer.from(match[2], 'base64'),
   };
+}
+
+function assertDownloadUrlAllowed(config, rawUrl) {
+  const parsed = new URL(rawUrl);
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`Unsupported generated image URL protocol: ${parsed.protocol}`);
+  }
+  if (config.allowPrivateGeneratedImageUrls) {
+    return;
+  }
+
+  const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '');
+  if (['localhost', 'metadata.google.internal'].includes(hostname)) {
+    throw new Error(`Generated image URL host is blocked: ${hostname}`);
+  }
+
+  const ipVersion = net.isIP(hostname);
+  if (ipVersion === 4) {
+    const parts = hostname.split('.').map((part) => Number.parseInt(part, 10));
+    const [a, b] = parts;
+    if (
+      a === 10
+      || a === 127
+      || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && b === 168)
+      || (a === 100 && b >= 64 && b <= 127)
+      || hostname === '0.0.0.0'
+    ) {
+      throw new Error(`Generated image URL host is blocked: ${hostname}`);
+    }
+  }
+
+  if (ipVersion === 6) {
+    if (hostname === '::1' || hostname.startsWith('fc') || hostname.startsWith('fd') || hostname.startsWith('fe80')) {
+      throw new Error(`Generated image URL host is blocked: ${hostname}`);
+    }
+  }
 }
 
 export async function ensureStorage(config) {
@@ -122,14 +161,14 @@ export async function saveGeneratedImagesFromResponse({ config, requestId, respo
 
     if (typeof item?.b64_json === 'string') {
       buffer = Buffer.from(item.b64_json, 'base64');
+      if (buffer.length > config.generatedImageDownloadMaxBytes) {
+        throw Object.assign(new Error(`Generated image ${index} is too large`), { statusCode: 413 });
+      }
       contentType = sniffImageType(buffer);
     } else if (typeof item?.url === 'string') {
-      const imageResponse = await fetch(item.url);
-      if (!imageResponse.ok) {
-        throw new Error(`Failed to download generated image ${index}: ${imageResponse.status}`);
-      }
-      buffer = Buffer.from(await imageResponse.arrayBuffer());
-      contentType = imageResponse.headers.get('content-type') || sniffImageType(buffer);
+      const downloaded = await downloadGeneratedImage(config, item.url, index);
+      buffer = downloaded.buffer;
+      contentType = downloaded.contentType;
     }
 
     if (buffer?.length) {
@@ -154,6 +193,9 @@ export async function saveGeneratedImagesFromSse({ config, requestId, sseText })
   for (let index = 0; index < fallback.length; index += 1) {
     const event = fallback[index];
     const buffer = Buffer.from(event.b64_json, 'base64');
+    if (buffer.length > config.generatedImageDownloadMaxBytes) {
+      throw Object.assign(new Error(`Generated image event ${index} is too large`), { statusCode: 413 });
+    }
     if (buffer.length) {
       outputs.push(await saveGeneratedImage({
         config,
@@ -166,6 +208,65 @@ export async function saveGeneratedImagesFromSse({ config, requestId, sseText })
   }
 
   return outputs;
+}
+
+async function downloadGeneratedImage(config, rawUrl, index) {
+  assertDownloadUrlAllowed(config, rawUrl);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.generatedImageDownloadTimeoutMs);
+
+  try {
+    const imageResponse = await fetch(rawUrl, { signal: controller.signal });
+    if (!imageResponse.ok) {
+      throw new Error(`Failed to download generated image ${index}: ${imageResponse.status}`);
+    }
+
+    const contentLength = Number.parseInt(imageResponse.headers.get('content-length') || '', 10);
+    if (Number.isFinite(contentLength) && contentLength > config.generatedImageDownloadMaxBytes) {
+      throw Object.assign(new Error(`Generated image ${index} is too large`), { statusCode: 413 });
+    }
+
+    const reader = imageResponse.body?.getReader();
+    if (!reader) {
+      const buffer = Buffer.from(await imageResponse.arrayBuffer());
+      if (buffer.length > config.generatedImageDownloadMaxBytes) {
+        throw Object.assign(new Error(`Generated image ${index} is too large`), { statusCode: 413 });
+      }
+      return {
+        buffer,
+        contentType: imageResponse.headers.get('content-type') || sniffImageType(buffer),
+      };
+    }
+
+    const chunks = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      const chunk = Buffer.from(value);
+      total += chunk.length;
+      if (total > config.generatedImageDownloadMaxBytes) {
+        await reader.cancel();
+        throw Object.assign(new Error(`Generated image ${index} is too large`), { statusCode: 413 });
+      }
+      chunks.push(chunk);
+    }
+
+    const buffer = Buffer.concat(chunks);
+    return {
+      buffer,
+      contentType: imageResponse.headers.get('content-type') || sniffImageType(buffer),
+    };
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw Object.assign(new Error(`Generated image ${index} download timed out`), { statusCode: 504 });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function inferInputRole(fieldName) {

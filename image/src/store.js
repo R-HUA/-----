@@ -57,13 +57,15 @@ export class JsonStore {
   }
 
   async flush() {
-    this.writeQueue = this.writeQueue.then(async () => {
-      await fs.mkdir(path.dirname(this.dataFile), { recursive: true });
-      const tmp = `${this.dataFile}.${process.pid}.tmp`;
-      const payload = JSON.stringify({ records: this.list() }, null, 2);
-      await fs.writeFile(tmp, payload);
-      await fs.rename(tmp, this.dataFile);
-    });
+    this.writeQueue = this.writeQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await fs.mkdir(path.dirname(this.dataFile), { recursive: true });
+        const tmp = `${this.dataFile}.${process.pid}.tmp`;
+        const payload = JSON.stringify({ records: this.list() }, null, 2);
+        await fs.writeFile(tmp, payload);
+        await fs.rename(tmp, this.dataFile);
+      });
 
     return this.writeQueue;
   }
